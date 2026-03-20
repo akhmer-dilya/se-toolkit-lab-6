@@ -35,9 +35,22 @@ if env_file.exists():
             key, value = line.split("=", 1)
             os.environ.setdefault(key.strip(), value.strip())
 
+# Also load LMS_API_KEY from .env.docker.secret
+docker_env_file = Path(__file__).parent / ".env.docker.secret"
+if docker_env_file.exists():
+    for line in docker_env_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip())
+
 LLM_API_KEY = os.environ.get("LLM_API_KEY")
 LLM_API_BASE = os.environ.get("LLM_API_BASE")
 LLM_MODEL = os.environ.get("LLM_MODEL")
+LMS_API_KEY = os.environ.get("LMS_API_KEY")
+
+# Backend API base URL (can be overridden by environment)
+AGENT_API_BASE_URL = os.environ.get("AGENT_API_BASE_URL", "http://localhost:42002")
 
 # Project root directory
 PROJECT_ROOT = Path(__file__).parent.resolve()
@@ -131,36 +144,105 @@ def list_files(path: str) -> str:
         return f"Error: {e}"
 
 
+def query_api(method: str, path: str, body: str = None) -> str:
+    """Make an HTTP request to the backend LMS API.
+
+    Args:
+        method: HTTP method (GET, POST, PUT, DELETE)
+        path: API path (e.g., '/items/')
+        body: Optional JSON request body for POST/PUT
+
+    Returns:
+        JSON string with status_code and body, or error message.
+    """
+    # Validate method
+    allowed_methods = ["GET", "POST", "PUT", "DELETE"]
+    method = method.upper()
+    if method not in allowed_methods:
+        return f"Error: Method must be one of {allowed_methods}"
+
+    # Validate path
+    if not path.startswith("/"):
+        return "Error: Path must start with /"
+    if ".." in path:
+        return "Error: Path traversal not allowed"
+
+    # Build URL
+    url = f"{AGENT_API_BASE_URL}{path}"
+
+    # Prepare headers
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LMS_API_KEY}",
+    }
+
+    print(f"Querying API: {method} {url}", file=sys.stderr)
+
+    try:
+        # Make request
+        if method in ["GET", "DELETE"]:
+            response = httpx.get(url, headers=headers, timeout=30.0)
+        elif method == "POST":
+            request_body = json.loads(body) if body else {}
+            response = httpx.post(url, headers=headers, json=request_body, timeout=30.0)
+        elif method == "PUT":
+            request_body = json.loads(body) if body else {}
+            response = httpx.put(url, headers=headers, json=request_body, timeout=30.0)
+
+        # Parse response
+        result = {
+            "status_code": response.status_code,
+            "body": response.json() if response.text else None,
+        }
+        return json.dumps(result)
+
+    except httpx.TimeoutException:
+        return "Error: Request timed out after 30 seconds"
+    except httpx.HTTPError as e:
+        return f"Error: HTTP request failed: {e}"
+    except json.JSONDecodeError as e:
+        return f"Error: Invalid JSON in body: {e}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
 # Tool functions mapping
 TOOL_FUNCTIONS = {
     "read_file": read_file,
     "list_files": list_files,
+    "query_api": query_api,
 }
 
 # ---------------------------------------------------------------------------
 # System prompt
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are a documentation assistant for a software engineering toolkit project.
+SYSTEM_PROMPT = """You are a documentation and system assistant for a software engineering toolkit project.
 
-You have access to two tools. To use them, include this format in your response:
+You have access to three tools. To use them, include this format in your response:
 
 TOOL_CALL: tool_name({"arg": "value"})
 
 Available tools:
 1. list_files({"path": "directory"}) - List files in a directory
 2. read_file({"path": "file"}) - Read contents of a file
+3. query_api({"method": "GET", "path": "/endpoint", "body": "..."}) - Make HTTP requests to the backend API
 
-To answer questions about the project:
-1. First use list_files to discover relevant files (e.g., in the 'wiki' directory)
-2. Then use read_file to read content from relevant files
-3. Find the answer in the file contents
-4. Include the source reference (file path and section anchor if applicable)
+When to use each tool:
+- Use list_files to discover what files exist in a directory
+- Use read_file to read documentation, source code, or configuration files
+- Use query_api to query live system data (database contents, analytics, API responses)
+
+For example:
+- "What files are in the wiki?" → list_files({"path": "wiki"})
+- "How do you resolve a merge conflict?" → read_file({"path": "wiki/git-workflow.md"})
+- "How many items are in the database?" → query_api({"method": "GET", "path": "/items/"})
+- "What is the average score?" → query_api({"method": "GET", "path": "/analytics/scores?lab=lab-01"})
 
 When providing answers:
 - Be concise and accurate
-- Always include the source field with the file path
-- If the answer is in a specific section, include the section anchor (e.g., wiki/git-workflow.md#resolving-merge-conflicts)
+- Include the source field with file path when referencing documentation
+- For API queries, include the endpoint path as source
 - If you cannot find the answer, say so honestly
 
 Important: Only access files within the project directory. Do not attempt to read files outside the project.

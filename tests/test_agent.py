@@ -62,27 +62,49 @@ def test_agent_tools_integration():
 
 
 def test_agent_read_file_for_merge_conflict():
-    """Test that agent can use read_file for git workflow questions.
-    
-    This test verifies the tool is available and can read the relevant file.
-    Full LLM integration test requires authentication.
-    """
+    """Test that agent can use read_file for git workflow questions."""
     project_root = Path(__file__).parent.parent
     sys.path.insert(0, str(project_root))
-    
+
     from agent import read_file
-    
-    # Verify the git-workflow.md file exists and can be read
+
     content = read_file("wiki/git-workflow.md")
     assert not content.startswith("Error:"), f"Cannot read git-workflow.md: {content}"
-    assert "merge" in content.lower() or "conflict" in content.lower() or "Git" in content, \
-        "git-workflow.md should contain relevant content"
-    
+    assert "merge" in content.lower() or "conflict" in content.lower() or "Git" in content
+
     print(f"✓ read_file for merge conflict question: file accessible")
+
+
+def test_agent_query_api_tool():
+    """Test that query_api tool is available and configured."""
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+
+    from agent import query_api, LMS_API_KEY, AGENT_API_BASE_URL
+
+    # Verify configuration is loaded
+    assert LMS_API_KEY is not None, "LMS_API_KEY should be set"
+    assert AGENT_API_BASE_URL is not None, "AGENT_API_BASE_URL should be set"
+
+    # Test query_api validation (without actual API call)
+    # Test invalid method
+    result = query_api("INVALID", "/items/")
+    assert "Error:" in result, f"Should reject invalid method: {result}"
+
+    # Test path validation
+    result = query_api("GET", "items/")  # Missing leading /
+    assert "Error:" in result, f"Should require leading /: {result}"
+
+    # Test path traversal blocked
+    result = query_api("GET", "/../secret")
+    assert "Error:" in result, f"Should block path traversal: {result}"
+
+    print(f"✓ query_api tool configured and validates input")
 
 
 if __name__ == "__main__":
     test_agent_returns_valid_json_structure()
     test_agent_tools_integration()
     test_agent_read_file_for_merge_conflict()
+    test_agent_query_api_tool()
     print("\nAll tests passed!")
