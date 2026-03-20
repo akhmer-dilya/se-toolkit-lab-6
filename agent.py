@@ -35,6 +35,9 @@ if env_file.exists():
             key, value = line.split("=", 1)
             os.environ.setdefault(key.strip(), value.strip())
 
+LLM_API_KEY = os.environ.get("LLM_API_KEY")
+LLM_API_BASE = os.environ.get("LLM_API_BASE")
+LLM_MODEL = os.environ.get("LLM_MODEL")
 # Also load LMS_API_KEY from .env.docker.secret
 docker_env_file = Path(__file__).parent / ".env.docker.secret"
 if docker_env_file.exists():
@@ -217,6 +220,9 @@ TOOL_FUNCTIONS = {
 # System prompt
 # ---------------------------------------------------------------------------
 
+SYSTEM_PROMPT = """You are a documentation assistant for a software engineering toolkit project.
+
+You have access to two tools. To use them, include this format in your response:
 SYSTEM_PROMPT = """You are a documentation and system assistant for a software engineering toolkit project.
 
 You have access to three tools. To use them, include this format in your response:
@@ -226,6 +232,17 @@ TOOL_CALL: tool_name({"arg": "value"})
 Available tools:
 1. list_files({"path": "directory"}) - List files in a directory
 2. read_file({"path": "file"}) - Read contents of a file
+
+To answer questions about the project:
+1. First use list_files to discover relevant files (e.g., in the 'wiki' directory)
+2. Then use read_file to read content from relevant files
+3. Find the answer in the file contents
+4. Include the source reference (file path and section anchor if applicable)
+
+When providing answers:
+- Be concise and accurate
+- Always include the source field with the file path
+- If the answer is in a specific section, include the section anchor (e.g., wiki/git-workflow.md#resolving-merge-conflicts)
 3. query_api({"method": "GET", "path": "/endpoint", "body": "..."}) - Make HTTP requests to the backend API
 
 When to use each tool:
